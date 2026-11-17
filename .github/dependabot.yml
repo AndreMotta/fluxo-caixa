@@ -1,20 +1,58 @@
 version: 2
+
+# Política de atualização:
+# - minor e patch chegam agrupados (um PR por ecossistema), semanalmente;
+# - versões principais (major) são avaliadas manualmente: podem quebrar compatibilidade;
+# - Python fica na 3.12 (ADR-004) e Redis na linha 7.2: a partir da 7.4 a licença
+#   deixou de ser BSD (ADR-004).
+
 updates:
   - package-ecosystem: pip
-    directory: /services/lancamentos
+    directories: [/services/lancamentos, /services/consolidado, /tests/e2e]
     schedule: {interval: weekly}
-  - package-ecosystem: pip
-    directory: /services/consolidado
-    schedule: {interval: weekly}
+    groups:
+      dependencias-python:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+
   - package-ecosystem: docker
-    directory: /services/lancamentos
+    directories: [/services/lancamentos, /services/consolidado]
     schedule: {interval: weekly}
-  - package-ecosystem: docker
-    directory: /services/consolidado
-    schedule: {interval: weekly}
+    groups:
+      imagens-base:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: python
+        update-types: ["version-update:semver-minor"]
+
   - package-ecosystem: docker-compose
     directory: /
     schedule: {interval: weekly}
+    groups:
+      imagens-compose:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
+      - dependency-name: python
+        update-types: ["version-update:semver-minor"]
+      - dependency-name: redis
+        versions: [">=7.4"]
+
   - package-ecosystem: github-actions
     directory: /
     schedule: {interval: weekly}
+    groups:
+      actions:
+        patterns: ["*"]
+        update-types: [minor, patch]
+    ignore:
+      - dependency-name: "*"
+        update-types: ["version-update:semver-major"]
