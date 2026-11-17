@@ -11,7 +11,8 @@ GERAR_CHAVES := docker build -q --target runtime -t fluxo-lancamentos:chaves ser
 	&& docker run --rm --network none fluxo-lancamentos:chaves python -m app.gerar_chaves
 
 # Emite um JWT pelo IdP local (container sem rede; único que recebe a chave privada dos tokens).
-EMITIR_TOKEN := docker compose --profile ferramentas run --rm -T idp-local
+# O script filtra a saída do docker compose e devolve só o token.
+EMITIR_TOKEN := bash scripts/token.sh
 
 env:            ## cria o .env a partir do exemplo e gera os pares de chaves (eventos e IdP); troque as senhas!
 	@test -f .env || { cp .env.example .env && $(GERAR_CHAVES) >> .env \
@@ -46,7 +47,7 @@ token:          ## emite um JWT de desenvolvimento pelo IdP local (COMERCIANTE=l
 	@$(EMITIR_TOKEN) --comerciante $${COMERCIANTE:-loja-1}
 
 carga:          ## teste de carga do pico de 50 req/s (k6 em container)
-	@TOKEN=$$($(EMITIR_TOKEN) --comerciante carga | tr -d '\r'); \
+	@TOKEN=$$($(EMITIR_TOKEN) --comerciante carga); \
 	docker run --rm -i --network fluxo-caixa_borda -e TOKEN=$$TOKEN -e BASE_URL=http://gateway:8080 \
 		$(K6) run - < loadtest/consolidado-pico.js
 

@@ -6,8 +6,17 @@ set -euo pipefail
 BASE="${BASE_URL:-http://localhost:8080}"
 COMERCIANTE="demo-$(date +%s)"
 # Token emitido pelo IdP local (container sem rede; os serviços só têm a chave pública).
-TOKEN="$(docker compose --profile ferramentas run --rm -T idp-local --comerciante "$COMERCIANTE" | tr -d '\r')"
+TOKEN="$(bash "$(dirname "$0")/token.sh" --comerciante "$COMERCIANTE")"
 HOJE="$(TZ=America/Sao_Paulo date +%F)"
+
+echo "0) Conferindo o token com tudo no ar..."
+code=$(curl -s -o /dev/null -w '%{http_code}' "$BASE/v1/lancamentos?data=$HOJE" -H "Authorization: Bearer $TOKEN")
+if [ "$code" != "200" ]; then
+  echo "   FALHOU: GET /v1/lancamentos devolveu HTTP $code (esperado 200)."
+  echo "   O problema está no token ou no ambiente, não na resiliência. Nada foi derrubado."
+  exit 1
+fi
+echo "   token aceito"
 
 echo "1) Derrubando consolidado e rabbitmq..."
 docker compose stop consolidado rabbitmq >/dev/null
