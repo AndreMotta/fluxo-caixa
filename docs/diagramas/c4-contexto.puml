@@ -1,0 +1,23 @@
+@startuml c4-contexto
+!include <C4/C4_Context>
+
+title Fluxo de Caixa: C4 nível 1 (contexto)
+LAYOUT_LEFT_RIGHT()
+
+Person(comerciante, "Comerciante", "PDV, app ou backoffice")
+Person(gestor, "Gestor / contador", "Acompanha o resultado do dia")
+
+System(fluxo, "Plataforma Fluxo de Caixa", "Registra lançamentos (créditos/débitos) e entrega o saldo diário consolidado")
+
+System_Ext(idp, "Provedor de identidade", "OIDC / OAuth2 (Entra ID, Keycloak)")
+System_Ext(obs, "Observabilidade", "Métricas, logs, alertas")
+
+Rel(comerciante, fluxo, "Registra lançamentos", "HTTPS + JWT")
+Rel(gestor, fluxo, "Consulta consolidado diário", "HTTPS + JWT")
+Rel(comerciante, idp, "Autentica", "OIDC")
+Rel(gestor, idp, "Autentica", "OIDC")
+Rel(fluxo, idp, "Valida tokens", "JWKS")
+Rel(fluxo, obs, "Envia telemetria", "OTel / Prometheus")
+
+SHOW_LEGEND()
+@enduml

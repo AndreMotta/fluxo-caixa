@@ -1,0 +1,78 @@
+groups:
+  - name: fluxo-caixa-slos
+    rules:
+      - alert: ConsolidadoTaxaDeErroAlta
+        # SLO de pico: no máximo 5% de perda. Alertamos bem antes (1%).
+        expr: |
+          sum(rate(http_requests_total{service="consolidado",route="/v1/consolidado/diario/{data}",status=~"5.."}[5m]))
+            /
+          sum(rate(http_requests_total{service="consolidado",route="/v1/consolidado/diario/{data}"}[5m])) > 0.01
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "Consolidado com mais de 1% de erro 5xx"
+
+      - alert: ConsolidadoLatenciaP95Alta
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{service="consolidado"}[5m]))) > 0.2
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: "p95 do consolidado acima de 200 ms"
+
+      - alert: LancamentosTaxaDeErroAlta
+        expr: |
+          sum(rate(http_requests_total{service="lancamentos",status=~"5.."}[5m]))
+            /
+          sum(rate(http_requests_total{service="lancamentos"}[5m])) > 0.001
+        for: 5m
+        labels: {severity: page}
+        annotations:
+          summary: "Lançamentos com mais de 0,1% de erro 5xx (SLO 99,9%)"
+
+      - alert: OutboxAcumulando
+        # Broker fora ou lento: lançamentos continuam, mas o consolidado vai defasar.
+        expr: max(outbox_eventos_pendentes) > 1000
+        for: 5m
+        labels: {severity: ticket}
+        annotations:
+          summary: "Backlog do outbox acima de 1000 eventos"
+
+      - alert: ConsolidadoDefasado
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(consolidado_defasagem_segundos_bucket[5m]))) > 5
+        for: 10m
+        labels: {severity: ticket}
+        annotations:
+          summary: "p95 da defasagem lançamento -> consolidado acima de 5 s"
+
+      - alert: MensagensNaDLQ
+        expr: sum(rabbitmq_queue_messages_ready{queue="consolidado.lancamentos.dlq"}) > 0
+        for: 1m
+        labels: {severity: ticket}
+        annotations:
+          summary: "Eventos na DLQ do consolidado: investigar e reprocessar"
+
+      - alert: ServicoFora
+        expr: up{job=~"lancamentos|consolidado"} == 0
+        for: 1m
+        labels: {severity: page}
+        annotations:
+          summary: "Réplica {{ $labels.instance }} de {{ $labels.job }} sem responder"
+
+  - name: fluxo-caixa-seguranca
+    rules:
+      - alert: EventoComAssinaturaInvalida
+        # Evento sem assinatura válida da chave privada de Lançamentos: credencial do broker vazada ou adulteração.
+        expr: sum(increase(consolidado_eventos_total{resultado="assinatura_invalida"}[5m])) > 0
+        labels: {severity: page, categoria: seguranca}
+        annotations:
+          summary: "Evento com assinatura inválida descartado: possível adulteração na mensageria"
+
+      - alert: PicoDeAcessosNegados
+        # Força bruta de token, varredura de escopos ou cliente mal configurado.
+        expr: sum by (motivo) (rate(acessos_negados_total[5m])) * 60 > 30
+        for: 5m
+        labels: {severity: ticket, categoria: seguranca}
+        annotations:
+          summary: "Mais de 30 recusas/min por {{ $labels.motivo }}"

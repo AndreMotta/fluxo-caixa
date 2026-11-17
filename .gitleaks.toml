@@ -1,0 +1,12 @@
+title = "gitleaks - fluxo de caixa"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Valores ilustrativos do exemplo de configuração e arquivos locais não versionados"
+paths = [
+  '''(^|/)\.env\.example$''',
+  '''(^|/)\.env$''',
+  '''(^|/)\.git/''',
+]

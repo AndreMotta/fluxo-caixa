@@ -1,0 +1,223 @@
+name: fluxo-caixa
+
+# Ambiente local que reproduz a arquitetura alvo em escala reduzida.
+# - Redes separadas: o gateway (borda) não alcança banco, broker nem cache.
+# - Privilégio mínimo: migração e topologia do broker rodam em jobs com credenciais próprias;
+#   os serviços usam usuários que só leem/escrevem o necessário.
+# - Imagens de terceiros fixadas por digest (atualizadas pelo Dependabot).
+
+x-hardening: &hardening
+  restart: unless-stopped
+  read_only: true
+  tmpfs: [/tmp]
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+
+x-job: &job
+  restart: "no"
+  read_only: true
+  security_opt: ["no-new-privileges:true"]
+  cap_drop: [ALL]
+  healthcheck: {disable: true}
+
+services:
+  postgres:
+    image: postgres:16-alpine@sha256:aa6cb33cf4c19c765cefcf48d96176258800870a9a1e930ad126200f9d825139
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_DB: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?defina no .env}
+      LANC_DB_MIGRACAO_PASSWORD: ${LANC_DB_MIGRACAO_PASSWORD:?defina no .env}
+      LANC_DB_PASSWORD: ${LANC_DB_PASSWORD:?defina no .env}
+      CONS_DB_MIGRACAO_PASSWORD: ${CONS_DB_MIGRACAO_PASSWORD:?defina no .env}
+      CONS_DB_PASSWORD: ${CONS_DB_PASSWORD:?defina no .env}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./infra/postgres/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [dados]
+
+  rabbitmq:
+    image: rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df91b5a9830e9e07626c9ae281
+    restart: unless-stopped
+    environment:
+      # Administrador: usado só pelo job de topologia e pelo console. Os serviços NÃO usam este usuário.
+      RABBITMQ_DEFAULT_USER: ${RABBITMQ_USER:?defina no .env}
+      RABBITMQ_DEFAULT_PASS: ${RABBITMQ_PASSWORD:?defina no .env}
+    ports:
+      - "127.0.0.1:15672:15672"   # console de gestão, só na máquina local
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks: [dados]
+
+  # Topologia + usuários do broker como código (equivalente ao IaC do Service Bus em nuvem).
+  rabbitmq-topologia:
+    <<: *job
+    image: curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+    entrypoint: ["/bin/sh", "/topologia.sh"]
+    environment:
+      RABBITMQ_USER: ${RABBITMQ_USER}
+      RABBITMQ_PASSWORD: ${RABBITMQ_PASSWORD}
+      RABBITMQ_LANC_PASSWORD: ${RABBITMQ_LANC_PASSWORD:?defina no .env}
+      RABBITMQ_CONS_PASSWORD: ${RABBITMQ_CONS_PASSWORD:?defina no .env}
+    volumes:
+      - ./infra/rabbitmq/topologia.sh:/topologia.sh:ro
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks: [dados]
+
+  redis:
+    image: redis:7.2-alpine@sha256:82403a0812a51faf6779f8d0dbe25ea85279ec7d49d24a3c78a65e9d8a87fa5f   # 7.2 = BSD (ADR-004)
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?defina no .env}
+    command: >
+      redis-server --save "" --appendonly no
+      --maxmemory 128mb --maxmemory-policy allkeys-lru
+      --requirepass ${REDIS_PASSWORD}
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a \"$$REDIS_PASSWORD\" --no-auth-warning ping | grep -q PONG"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [dados]
+
+  lancamentos-migracao:
+    <<: *job
+    build:
+      context: ./services/lancamentos
+      target: runtime
+    command: ["python", "-m", "app.migrar"]
+    environment:
+      LANC_DATABASE_URL: postgresql://lancamentos_migracao:${LANC_DB_MIGRACAO_PASSWORD}@postgres:5432/lancamentos
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [dados]
+
+  lancamentos:
+    <<: *hardening
+    build:
+      context: ./services/lancamentos
+      target: runtime
+    environment:
+      LANC_DATABASE_URL: postgresql://lancamentos_app:${LANC_DB_PASSWORD}@postgres:5432/lancamentos
+      LANC_RABBITMQ_URL: amqp://fluxo_lancamentos:${RABBITMQ_LANC_PASSWORD}@rabbitmq:5672/
+      # Só a chave PÚBLICA do IdP: confere tokens, não consegue emitir.
+      LANC_JWT_CHAVE_PUBLICA: ${IDP_CHAVE_PUBLICA:?gere o par com make env ou make chaves}
+      # Só Lançamentos recebe a chave PRIVADA (assina os eventos).
+      LANC_EVENTOS_CHAVE_PRIVADA: ${EVENTOS_CHAVE_PRIVADA:?gere o par com make env ou make chaves}
+      LANC_DOCS_HABILITADO: "true"   # somente no ambiente local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      lancamentos-migracao:
+        condition: service_completed_successfully
+      # De propósito NÃO depende de rabbitmq nem de consolidado (requisito de disponibilidade).
+    deploy:
+      replicas: 2
+      resources:
+        limits: {cpus: "0.50", memory: 256M}
+    networks: [borda, dados]
+
+  consolidado-migracao:
+    <<: *job
+    build:
+      context: ./services/consolidado
+      target: runtime
+    command: ["python", "-m", "app.migrar"]
+    environment:
+      CONS_DATABASE_URL: postgresql://consolidado_migracao:${CONS_DB_MIGRACAO_PASSWORD}@postgres:5432/consolidado
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [dados]
+
+  consolidado:
+    <<: *hardening
+    build:
+      context: ./services/consolidado
+      target: runtime
+    environment:
+      CONS_DATABASE_URL: postgresql://consolidado_app:${CONS_DB_PASSWORD}@postgres:5432/consolidado
+      CONS_RABBITMQ_URL: amqp://fluxo_consolidado:${RABBITMQ_CONS_PASSWORD}@rabbitmq:5672/
+      CONS_REDIS_URL: redis://:${REDIS_PASSWORD}@redis:6379/0
+      CONS_JWT_CHAVE_PUBLICA: ${IDP_CHAVE_PUBLICA:?gere o par com make env ou make chaves}
+      # Consolidado recebe só a chave PÚBLICA: confere, mas não consegue assinar.
+      CONS_EVENTOS_CHAVES_PUBLICAS: ${EVENTOS_CHAVE_PUBLICA:?gere o par com make env ou make chaves}
+      CONS_DOCS_HABILITADO: "true"   # somente no ambiente local
+    depends_on:
+      postgres:
+        condition: service_healthy
+      consolidado-migracao:
+        condition: service_completed_successfully
+    deploy:
+      replicas: 2
+      resources:
+        limits: {cpus: "0.50", memory: 256M}
+    networks: [borda, dados]
+
+  gateway:
+    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:8080:8080"   # só localhost: sem TLS, não deve ficar exposto na rede
+    volumes:
+      - ./infra/gateway/nginx.conf:/etc/nginx/nginx.conf:ro
+    depends_on: [lancamentos, consolidado]
+    networks: [borda]
+
+  prometheus:
+    image: prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
+    profiles: [observabilidade]
+    ports:
+      - "127.0.0.1:9090:9090"
+    volumes:
+      - ./infra/prometheus:/etc/prometheus:ro
+    networks: [borda, dados]
+
+  # IdP local: o ÚNICO lugar que recebe a chave privada dos tokens. Não fica rodando: é chamado
+  # sob demanda (`make token`), sem rede, e os serviços nunca veem essa chave.
+  # Em produção: Entra ID (RS256 + JWKS).
+  idp-local:
+    <<: *job
+    build:
+      context: ./services/lancamentos
+      target: runtime
+    profiles: [ferramentas]
+    network_mode: none
+    entrypoint: ["python", "-m", "app.dev_token"]
+    environment:
+      IDP_CHAVE_PRIVADA: ${IDP_CHAVE_PRIVADA:?gere o par com make env ou make chaves}
+
+  e2e:
+    image: python:3.12-slim@sha256:5e2bdb1b0d542d5039cffb8181c65930093949194a65c365dfb1b0fe13a4fa5b
+    profiles: [e2e]
+    working_dir: /e2e
+    environment:
+      BASE_URL: http://gateway:8080
+      # O e2e faz o papel do IdP (emite os próprios tokens); só ele e o idp-local têm a privada.
+      IDP_CHAVE_PRIVADA: ${IDP_CHAVE_PRIVADA:?gere o par com make env ou make chaves}
+    volumes:
+      - ./tests/e2e:/e2e:ro
+    command: sh -c "pip install -q --disable-pip-version-check -r requirements.txt && pytest -q -p no:cacheprovider"
+    networks: [borda]
+
+networks:
+  borda: {}
+  dados: {}
+
+volumes:
+  pgdata: {}
+  rabbitdata: {}

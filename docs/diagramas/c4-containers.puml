@@ -1,0 +1,44 @@
+@startuml c4-containers
+!include <C4/C4_Container>
+
+title Fluxo de Caixa: C4 nível 2 (containers)
+
+AddRelTag("async", $lineStyle = DashedLine())
+AddElementTag("borda", $bgColor = "#6b7280")
+
+Person(cliente, "Clientes", "PDV / app / backoffice")
+
+System_Boundary(borda, "Borda") {
+  Container(waf, "WAF + TLS", "Azure Front Door", "OWASP, bot, TLS 1.2+", $tags = "borda")
+  Container(gw, "API Gateway", "APIM (local: NGINX)", "validate-jwt, rate limit, roteamento, retry de GET", $tags = "borda")
+}
+
+System_Boundary(ctxL, "Contexto Lançamentos") {
+  Container(lapi, "Lançamentos API", "Python 3.12, FastAPI", "Comandos: registrar, estornar; consultas por dia")
+  Container(relay, "Outbox relay", "asyncio (mesmo processo)", "Publica eventos pendentes com publisher confirms")
+  ContainerDb(ldb, "Banco Lançamentos", "PostgreSQL 16", "lancamentos (append-only) + outbox")
+}
+
+ContainerQueue(mq, "Broker", "RabbitMQ quorum (nuvem: Service Bus)", "Tópico fluxo-caixa.lancamentos + DLQ")
+
+System_Boundary(ctxC, "Contexto Consolidado") {
+  Container(cons, "Consumidor", "aio-pika", "Aplica eventos com dedupe por event_id")
+  Container(capi, "Consolidado API", "Python 3.12, FastAPI", "Relatório diário: totais, saldo do dia e acumulado")
+  ContainerDb(cdb, "Banco Consolidado", "PostgreSQL 16", "saldo_diario + eventos_processados")
+  ContainerDb(cache, "Cache", "Redis 7.2", "cache-aside, TTL 5 s, fail-open")
+}
+
+Rel(cliente, waf, "HTTPS + JWT")
+Rel(waf, gw, "HTTPS")
+Rel(gw, lapi, "POST/GET /v1/lancamentos")
+Rel(gw, capi, "GET /v1/consolidado/diario/{data}")
+Rel(lapi, ldb, "1 transação: lançamento + evento", "SQL")
+Rel(relay, ldb, "Lê pendentes (SKIP LOCKED)", "SQL")
+Rel(relay, mq, "LancamentoRegistrado v1", "AMQP", $tags = "async")
+Rel(mq, cons, "Entrega at-least-once", "AMQP", $tags = "async")
+Rel(cons, cdb, "Dedupe + UPSERT atômico", "SQL")
+Rel(capi, cache, "1º consulta", "RESP")
+Rel(capi, cdb, "Miss: SELECT agregado", "SQL")
+
+SHOW_LEGEND()
+@enduml
