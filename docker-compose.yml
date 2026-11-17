@@ -78,7 +78,7 @@ services:
     networks: [dados]
 
   redis:
-    image: redis:7.2-alpine@sha256:82403a0812a51faf6779f8d0dbe25ea85279ec7d49d24a3c78a65e9d8a87fa5f   # 7.2 = BSD (ADR-004)
+    image: redis:8.10-alpine@sha256:7958cfbb9d152f87dadfbc89f1b0b15938f0b81ff8982feb327476f4911935c3   # 7.2 = BSD (ADR-004)
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:?defina no .env}
