@@ -63,7 +63,7 @@ services:
   # Topologia + usuários do broker como código (equivalente ao IaC do Service Bus em nuvem).
   rabbitmq-topologia:
     <<: *job
-    image: curlimages/curl:8.10.1@sha256:d9b4541e214bcd85196d6e92e2753ac6d0ea699f0af5741f8c6cccbfcf00ef4b
+    image: curlimages/curl:8.23.0@sha256:3fb7e13e5d179a845c97d78204f3f1064d1907037f26a3ebf91710571151fd93
     entrypoint: ["/bin/sh", "/topologia.sh"]
     environment:
       RABBITMQ_USER: ${RABBITMQ_USER}
@@ -169,7 +169,7 @@ services:
     networks: [borda, dados]
 
   gateway:
-    image: nginx:1.27-alpine@sha256:65645c7bb6a0661892a8b03b89d0743208a18dd2f3f17a54ef4b76fb8e2f2a10
+    image: nginx:1.31-alpine@sha256:fed7e14be83cbd2661a75cdc5b872d936cf155d46c327084d30b8df19ae88d72
     restart: unless-stopped
     ports:
       - "127.0.0.1:8080:8080"   # só localhost: sem TLS, não deve ficar exposto na rede
@@ -179,7 +179,7 @@ services:
     networks: [borda]
 
   prometheus:
-    image: prom/prometheus:v2.54.1@sha256:f6639335d34a77d9d9db382b92eeb7fc00934be8eae81dbc03b31cfe90411a94
+    image: prom/prometheus:v2.55.1@sha256:2659f4c2ebb718e7695cb9b25ffa7d6be64db013daba13e05c875451cf51b0d3
     profiles: [observabilidade]
     ports:
       - "127.0.0.1:9090:9090"
