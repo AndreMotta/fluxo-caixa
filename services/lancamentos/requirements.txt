@@ -7,7 +7,7 @@ pydantic==2.14.3
 pydantic-settings==2.16.2
 psycopg[binary]==3.3.8
 psycopg-pool==3.3.3
-aio-pika==9.6.2
+aio-pika==10.2.3
 PyJWT[crypto]==2.15.1
 # Uso direto: assinatura Ed25519 dos eventos (antes só vinha como dependência do PyJWT).
 cryptography==50.0.2
