@@ -1,6 +1,6 @@
 # Versões verificadas no OSV em 10/11/2026 (sem vulnerabilidades conhecidas).
 # Atualização contínua: Dependabot + pip-audit no CI.
-fastapi==0.162.4
+fastapi==0.162.7
 starlette==1.10.0
 uvicorn[standard]==0.54.0
 pydantic==2.14.3
