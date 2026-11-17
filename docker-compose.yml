@@ -43,7 +43,7 @@ services:
     networks: [dados]
 
   rabbitmq:
-    image: rabbitmq:3.13-management-alpine@sha256:606d8c0d6b3c18d1da9afc53bc7cdb2a8d5486df91b5a9830e9e07626c9ae281
+    image: rabbitmq:4.4-management-alpine@sha256:4841f6384ef8313c3594cd3f2e9f40c10805f8a61c45f08a9a5d9ddea8199267
     restart: unless-stopped
     environment:
       # Administrador: usado só pelo job de topologia e pelo console. Os serviços NÃO usam este usuário.
